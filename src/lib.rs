@@ -101,6 +101,39 @@ impl Matrix {
         diag
     }
 
+    pub fn sub(&self, other: &Matrix) -> Matrix {
+        let (nrows, ncols) = self.shape();
+        let (orows, ocols) = other.shape();
+        assert_eq!(nrows, orows);
+        assert_eq!(ncols, ocols);
+        let mut rows: Vec<Vec<f64>> = Vec::new();
+        for rc in 0..nrows {
+            let mut row: Vec<f64> = Vec::new();
+            for cc in 0..ncols {
+                row.push(self.get(rc, cc).expect("Failed to get value") - other.get(rc, cc).expect("Failed to get value"));
+            }
+            rows.push(row);
+        }
+        Matrix { rows }
+    }
+
+    pub fn similar(&self, other: &Matrix, tol: f64) -> bool {
+        let (nrows, ncols) = self.shape();
+        let (orows, ocols) = other.shape();
+        if nrows != orows || ncols != ocols {
+            return false;
+        }
+        let diff = self.sub(other);
+        for rc in 0..nrows {
+            for cc in 0..ncols {
+                if diff.get(rc, cc).unwrap().abs() > tol {
+                    return false;
+                }
+            }
+        }
+        return true
+    }
+
     pub fn fill(n: usize, value: f64) -> Matrix {
         let mut rows: Vec<Vec<f64>> = Vec::new();
         for _i in 0..n {
@@ -115,6 +148,11 @@ impl Matrix {
 
     pub fn ones(n: usize) -> Matrix {
         Matrix::fill(n, 1.0)
+    }
+
+    pub fn foo() -> i32 {
+        let bar:i32 = 3;
+        bar
     }
 
     pub fn zeros(n: usize) -> Matrix {
@@ -178,6 +216,114 @@ impl Matrix {
 
         Ok(inv)
     }
+    pub fn determinant(&self) -> f64 {
+        let (nrows, ncols) = self.shape();
+        assert_eq!(nrows, ncols);
+        let mut mat: Matrix = self.clone();
+        let mut det: f64 = 1.0;
+        for i in 0..nrows {
+            let pivot = mat.get(i, i).expect("Failed to get value");
+            if pivot.abs() < 1e-10 {
+                return 0.0;
+            }
+            det *= pivot;
+            for j in 0..ncols {
+                mat.rows[i][j] /= pivot;
+            }
+            for j in 0..nrows {
+                if i != j {
+                    let factor = mat.get(j, i).expect("Failed to get value");
+                    for k in 0..ncols {
+                        mat.rows[j][k] -= factor * mat.get(i, k).expect("Failed to get value");
+                    }
+                }
+            }
+        }
+        det
+    }
+    pub fn lu_decomposition(&self) -> (Matrix, Matrix) {
+        let (nrows, ncols) = self.shape();
+        assert_eq!(nrows, ncols);
+
+        let mut l = Matrix::identity(nrows);
+        let mut u = self.clone();
+
+        for i in 0..nrows {
+            for j in i+1..nrows {
+                let factor = u.rows[j][i] / u.rows[i][i];
+                l.rows[j][i] = factor;
+                for k in i..nrows {
+                    u.rows[j][k] -= factor * u.rows[i][k];
+                }
+            }
+        }
+
+        (l, u)
+    }
+    /// Unpack rows to long vector
+    pub fn unpack(&self) -> Vec<f64> {
+        let mut vec: Vec<f64> = Vec::new();
+        for row in &self.rows {
+            for val in row {
+                vec.push(*val);
+            }
+        }
+        vec
+    }
+
+    /// Singular Value Decomposition
+    /// Call the LAPACK function sgesdd
+    pub fn svd(&self) -> Matrix {
+        let (nrows, ncols) = self.shape();
+        assert_eq!(nrows, ncols);
+        let vec: Vec<f64> = self.unpack();
+        let mut mat = vec;
+        let mut s: Vec<f64> = vec![0.0; nrows];
+        let mut u: Vec<f64> = vec![0.0; nrows * nrows];
+        let mut vt: Vec<f64> = vec![0.0; nrows * nrows];
+        /*
+        If jobz = 'N', lwork ≥ 3*min(m, n) + max(max(m, n), 7*min(m, n))
+If jobz = 'O':
+
+lwork ≥ 3*min(m, n) + max(max(m, n), 5*min(m, n)*min(m, n) + 4*min(m, n))
+
+If jobz = 'S', lwork ≥ 4*min(m, n)*min(m, n) + 7*min(m, n)
+
+If jobz = 'A', lwork ≥ 4*min(m, n)*min(m, n) + 6*min(m, n) + max(m, n)
+         */
+        let mut work: Vec<f64> = vec![0.0; 1000];
+        let worklen = (work.len());
+        let mut iwork: Vec<i32> = vec![0; 8 * nrows];
+        let mut info: i32 = 0;
+        unsafe {
+            lapack::dgesdd(
+                b'A' as u8, // 0
+                nrows as i32, // 1
+                ncols as i32, // 2
+                &mut mat, //3 
+                nrows as i32, //4
+                &mut s, // 5
+                &mut u, // 6
+                ncols as i32, // 7 
+                &mut vt, // 8 
+                nrows as i32, // 9
+                &mut work, // 10
+                worklen as i32, // 11
+                &mut iwork, //12
+                &mut info, // 13
+            );
+        }
+        println!("info: {}", info);
+        println!("lwork: {:?}", worklen);
+        println!("vt: {:?}", vt);
+        println!("s: {:?}", s);
+        println!("u: {:?}", u);
+
+        Matrix::from_vec(vec![s])
+        //Matrix::from_vec(vec![vt])
+    }
+
+
 }
 
 #[cfg(test)]
@@ -363,5 +509,106 @@ mod tests {
             ],
         };
         assert_eq!(mat, expected);
+    }
+    #[test]
+    fn test_determinant() {
+        let mat: Matrix = Matrix {
+            rows: vec![
+                vec![6.0, 1.0, 1.0],
+                vec![4.0, -2.0, 5.0],
+                vec![2.0, 8.0, 7.0],
+
+            ],
+        };
+        assert_eq!(mat.determinant(), -306.0);
+    }
+    #[test]
+    fn test_lu_decomposition() {
+        let mat: Matrix = Matrix {
+            rows: vec![
+                vec![4.0, 3.0],
+                vec![6.0, 3.0],
+            ],
+        };
+        let (l, u) = mat.lu_decomposition();
+        let expected_l: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 0.0],
+                vec![1.5, 1.0],
+            ],
+        };
+        let expected_u: Matrix = Matrix {
+            rows: vec![
+                vec![4.0, 3.0],
+                vec![0.0, -1.5],
+            ],
+        };
+        assert_eq!(l, expected_l);
+        assert_eq!(u, expected_u);
+    }
+    #[test]
+    fn test_svd() {
+        let mat: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0],
+                vec![3.0, 4.0],
+            ],
+        };
+        let expected: Matrix = Matrix {
+            rows: vec![
+                vec![5.0, 0.0],
+                vec![0.0, 0.0],
+            ],
+        };
+        assert_eq!(mat.svd(), expected);
+    }
+
+    #[test]
+    fn test_sub() {
+        let matA: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0],
+                vec![3.0, 4.0],
+            ],
+        };
+        let matB: Matrix = Matrix {
+            rows: vec![
+                vec![5.0, 5.0],
+                vec![0.0, 4.0],
+            ],
+        };
+        let matResult: Matrix = Matrix {
+            rows: vec![
+                vec![-4.0, -3.0],
+                vec![3.0, 0.0],
+            ],
+        };
+        assert_eq!(matA.sub(&matB), matResult);
+    }
+
+    #[test]
+    fn test_similar() {
+        let matA: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0],
+                vec![3.0, 4.0],
+            ],
+        };
+        let matB: Matrix = Matrix {
+            rows: vec![
+                vec![5.0, 5.0],
+                vec![0.0, 4.0],
+            ],
+        };
+        let matC: Matrix = Matrix {
+            rows: vec![
+                vec![1.0001, 2.0],
+                vec![3.0, 4.0],
+            ],
+        };
+        assert!(!matA.similar(&matB, 0.001));
+        assert!(matA.similar(&matC, 0.1));
+
+
     }
 }
