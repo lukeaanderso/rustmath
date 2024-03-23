@@ -9,6 +9,12 @@ pub struct Matrix {
     pub rows: Vec<Vec<f64>>,
 }
 
+pub struct SVDResult {
+    pub u: Vec<f64>,
+    pub s: Vec<f64>,
+    pub vt: Vec<f64>
+}
+
 impl Matrix {
     pub fn get(&self, row: usize, col: usize) -> Option<f64> {
         let val = self.rows.get(row)?.get(col)?;
@@ -271,9 +277,23 @@ impl Matrix {
         vec
     }
 
+    pub fn reshape(&self, nrows: usize, ncols: usize) -> Matrix {
+        let mut vec: Vec<f64> = self.unpack();
+        vec.reverse();
+        let mut rows: Vec<Vec<f64>> = Vec::new();
+        for _ in 0..nrows {
+            let mut row: Vec<f64> = Vec::new();
+            for _ in 0..ncols {
+                row.push(vec.pop().expect("Failed to pop value"));
+            }
+            rows.push(row);
+        }
+        Matrix { rows }
+    }
+
     /// Singular Value Decomposition
     /// Call the LAPACK function sgesdd
-    pub fn svd(&self) -> Matrix {
+    pub fn svd(&self) -> SVDResult {
         let (nrows, ncols) = self.shape();
         assert_eq!(nrows, ncols);
         let vec: Vec<f64> = self.unpack();
@@ -292,7 +312,7 @@ If jobz = 'S', lwork ≥ 4*min(m, n)*min(m, n) + 7*min(m, n)
 If jobz = 'A', lwork ≥ 4*min(m, n)*min(m, n) + 6*min(m, n) + max(m, n)
          */
         let mut work: Vec<f64> = vec![0.0; 1000];
-        let worklen = (work.len());
+        let worklen = work.len();
         let mut iwork: Vec<i32> = vec![0; 8 * nrows];
         let mut info: i32 = 0;
         unsafe {
@@ -319,10 +339,25 @@ If jobz = 'A', lwork ≥ 4*min(m, n)*min(m, n) + 6*min(m, n) + max(m, n)
         println!("s: {:?}", s);
         println!("u: {:?}", u);
 
-        Matrix::from_vec(vec![s])
-        //Matrix::from_vec(vec![vt])
+        SVDResult { u: u, s: s, vt: vt }
     }
 
+    pub fn covariance(&self) -> Matrix {
+        let (nrows, ncols) = self.shape();
+        let mut rows: Vec<Vec<f64>> = Vec::new();
+        for i in 0..ncols {
+            let mut row: Vec<f64> = Vec::new();
+            for j in 0..ncols {
+                let mut sum: f64 = 0.0;
+                for k in 0..nrows {
+                    sum += self.get(k, i).expect("Failed to get value") * self.get(k, j).expect("Failed to get value");
+                }
+                row.push(sum / (nrows as f64));
+            }
+            rows.push(row);
+        }
+        Matrix { rows }
+    }
 
 }
 
@@ -556,11 +591,14 @@ mod tests {
         };
         let expected: Matrix = Matrix {
             rows: vec![
-                vec![5.0, 0.0],
-                vec![0.0, 0.0],
+                vec![-0.3722, 5.37228],
             ],
         };
-        assert_eq!(mat.svd(), expected);
+        let svd_result = mat.svd();
+        println!("u: {:?}", svd_result.u);
+        assert_eq!(expected, Matrix::from_vec(vec![svd_result.vt]));
+        
+
     }
 
     #[test]
@@ -608,7 +646,24 @@ mod tests {
         };
         assert!(!matA.similar(&matB, 0.001));
         assert!(matA.similar(&matC, 0.1));
+    }
 
-
+    #[test]
+    fn test_reshape() {
+        let matA: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0],
+            ],
+        };
+        let matB = matA.reshape(3, 2);
+        let matC: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0],
+                vec![3.0, 4.0],
+                vec![5.0, 6.0],
+            ],
+        };
+        assert_eq!(matB, matC);
     }
 }
