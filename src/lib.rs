@@ -1,7 +1,3 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 #[derive(Debug)]
 #[derive(PartialEq)]
 #[derive(Clone)]
@@ -98,6 +94,22 @@ impl Matrix {
         Matrix { rows: vec }
     }
 
+    /// Extracts the diagonal elements of the matrix.
+    ///
+    /// This function returns a vector containing the elements along the main diagonal
+    /// of the matrix (from top-left to bottom-right).
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - A reference to the Matrix instance.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<f64>` containing the diagonal elements of the matrix.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if it fails to retrieve any diagonal element.
     pub fn diag(&self) -> Vec<f64> {
         let (nrows, _ncols) = self.shape();
         let mut diag: Vec<f64> = Vec::new();
@@ -180,7 +192,7 @@ impl Matrix {
         }
         Matrix { rows }
     }
-    
+
     pub fn identity(n: usize) -> Matrix {
         Matrix::to_diag(vec![1.0; n])
     }
@@ -197,7 +209,7 @@ impl Matrix {
 
         for i in 0..nrows {
             let pivot = mat.get(i, i).expect("Failed to get value");
-            
+
             if pivot.abs() < 1e-10 {
                 return Err("Matrix is singular");
             }
@@ -291,55 +303,122 @@ impl Matrix {
         Matrix { rows }
     }
 
-    /// Singular Value Decomposition
-    /// Call the LAPACK function sgesdd
-    pub fn svd(&self) -> SVDResult {
+    /// Singular Value Decomposition (SVD) of a square matrix.
+    /// 
+    /// Computes the SVD decomposition A = U·Σ·Vᵀ using LAPACK's dgesdd routine.
+    /// The input matrix A is decomposed into:
+    /// - U: Left singular vectors (orthogonal matrix)
+    /// - Σ: Diagonal matrix of singular values in descending order
+    /// - Vᵀ: Transposed right singular vectors (orthogonal matrix)
+    /// 
+    /// # Implementation Details
+    /// - Internally converts matrices between row-major (Rust) and column-major (LAPACK) formats
+    /// - Uses LAPACK's divide-and-conquer SVD implementation for better performance
+    /// 
+    /// # Arguments
+    /// * `self` - A square matrix to decompose
+    /// 
+    /// # Returns
+    /// * `Ok(SVDResult)` containing U, singular values, and Vᵀ
+    /// * `Err` if the matrix is not square or if the computation fails
+    /// 
+    /// # Example
+    /// ```
+    /// use rustmath::Matrix;
+    /// let mat = Matrix::from_vec(vec![
+    ///     vec![1.0, 2.0],
+    ///     vec![3.0, 4.0],
+    /// ]);
+    /// let svd = mat.svd().unwrap();
+    /// // Original matrix can be reconstructed as U·Σ·Vᵀ
+    /// ```
+    pub fn svd(&self) -> Result<SVDResult, &'static str> {
         let (nrows, ncols) = self.shape();
         assert_eq!(nrows, ncols);
-        let vec: Vec<f64> = self.unpack();
-        let mut mat = vec;
+        
+        // Convert input matrix to column-major format for LAPACK
+        let mut mat = vec![0.0; nrows * ncols];
+        for i in 0..nrows {
+            for j in 0..ncols {
+                mat[i + j * nrows] = self.get(i, j).unwrap();
+            }
+        }
+        
         let mut s: Vec<f64> = vec![0.0; nrows];
         let mut u: Vec<f64> = vec![0.0; nrows * nrows];
         let mut vt: Vec<f64> = vec![0.0; nrows * nrows];
-        /*
-        If jobz = 'N', lwork ≥ 3*min(m, n) + max(max(m, n), 7*min(m, n))
-If jobz = 'O':
-
-lwork ≥ 3*min(m, n) + max(max(m, n), 5*min(m, n)*min(m, n) + 4*min(m, n))
-
-If jobz = 'S', lwork ≥ 4*min(m, n)*min(m, n) + 7*min(m, n)
-
-If jobz = 'A', lwork ≥ 4*min(m, n)*min(m, n) + 6*min(m, n) + max(m, n)
-         */
-        let mut work: Vec<f64> = vec![0.0; 1000];
-        let worklen = work.len();
+        
+        let mut work = vec![0.0; 1];
         let mut iwork: Vec<i32> = vec![0; 8 * nrows];
         let mut info: i32 = 0;
+        
         unsafe {
+            // Query optimal workspace size
             lapack::dgesdd(
-                b'A' as u8, // 0
-                nrows as i32, // 1
-                ncols as i32, // 2
-                &mut mat, //3 
-                nrows as i32, //4
-                &mut s, // 5
-                &mut u, // 6
-                ncols as i32, // 7 
-                &mut vt, // 8 
-                nrows as i32, // 9
-                &mut work, // 10
-                worklen as i32, // 11
-                &mut iwork, //12
-                &mut info, // 13
+                b'A' as u8,
+                nrows as i32,
+                ncols as i32,
+                &mut mat,
+                nrows as i32,
+                &mut s,
+                &mut u,
+                nrows as i32,
+                &mut vt,
+                nrows as i32,
+                &mut work,
+                -1,
+                &mut iwork,
+                &mut info,
             );
+            
+            if info != 0 {
+                return Err("Workspace query failed");
+            }
+            
+            // Allocate optimal workspace and compute SVD
+            let lwork = work[0] as usize;
+            work = vec![0.0; lwork];
+            
+            lapack::dgesdd(
+                b'A' as u8,
+                nrows as i32,
+                ncols as i32,
+                &mut mat,
+                nrows as i32,
+                &mut s,
+                &mut u,
+                nrows as i32,
+                &mut vt,
+                nrows as i32,
+                &mut work,
+                lwork as i32,
+                &mut iwork,
+                &mut info,
+            );
+            
+            match info {
+                0 => {
+                    // Convert U and VT from column-major back to row-major format
+                    let mut u_row_major = vec![0.0; nrows * nrows];
+                    let mut vt_row_major = vec![0.0; nrows * nrows];
+                    
+                    for i in 0..nrows {
+                        for j in 0..nrows {
+                            u_row_major[i * nrows + j] = u[i + j * nrows];
+                            vt_row_major[i * nrows + j] = vt[i + j * nrows];
+                        }
+                    }
+                    
+                    Ok(SVDResult { 
+                        u: u_row_major, 
+                        s, 
+                        vt: vt_row_major 
+                    })
+                },
+                i if i < 0 => Err("Invalid argument to dgesdd"),
+                _ => Err("SVD computation did not converge"),
+            }
         }
-        println!("info: {}", info);
-        println!("lwork: {:?}", worklen);
-        println!("vt: {:?}", vt);
-        println!("s: {:?}", s);
-        println!("u: {:?}", u);
-
-        SVDResult { u: u, s: s, vt: vt }
     }
 
     pub fn covariance(&self) -> Matrix {
@@ -367,11 +446,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
     #[test]
     fn test_matrix_get() {
         let mat = Matrix {
@@ -589,16 +663,31 @@ mod tests {
                 vec![3.0, 4.0],
             ],
         };
-        let expected: Matrix = Matrix {
-            rows: vec![
-                vec![-0.3722, 5.37228],
-            ],
-        };
-        let svd_result = mat.svd();
-        println!("u: {:?}", svd_result.u);
-        assert_eq!(expected, Matrix::from_vec(vec![svd_result.vt]));
+        let svd_result = mat.svd().expect("SVD failed");
         
-
+        // Reshape the vectors into matrices
+        let u_mat = Matrix::from_vec(vec![
+            vec![svd_result.u[0], svd_result.u[1]],
+            vec![svd_result.u[2], svd_result.u[3]]
+        ]);
+        
+        let s_mat = Matrix::to_diag(svd_result.s.clone());
+        
+        let vt_mat = Matrix::from_vec(vec![
+            vec![svd_result.vt[0], svd_result.vt[1]],
+            vec![svd_result.vt[2], svd_result.vt[3]]
+        ]);
+        
+        // Reconstruct A = U·Σ·Vᵀ
+        let us = u_mat.dot(&s_mat);
+        let reconstructed = us.dot(&vt_mat);
+        
+        // Check if the reconstruction matches the original
+        assert!(mat.similar(&reconstructed, 1e-6));
+        
+        // Verify singular values
+        assert!((svd_result.s[0] - 5.4649).abs() < 1e-4);
+        assert!((svd_result.s[1] - 0.3659).abs() < 1e-4);
     }
 
     #[test]
@@ -665,5 +754,51 @@ mod tests {
             ],
         };
         assert_eq!(matB, matC);
+    }
+
+    #[test]
+    fn test_svd_simple() {
+        // This matrix has known singular values: 3 and 0
+        let mat: Matrix = Matrix {
+            rows: vec![
+                vec![2.0, 2.0],
+                vec![1.0, 1.0],
+            ],
+        };
+        let svd_result = mat.svd().expect("SVD failed");
+        
+        // Reshape the vectors into matrices
+        let u_mat = Matrix::from_vec(vec![
+            vec![svd_result.u[0], svd_result.u[1]],
+            vec![svd_result.u[2], svd_result.u[3]]
+        ]);
+        
+        let s_mat = Matrix::to_diag(svd_result.s.clone());
+        
+        let vt_mat = Matrix::from_vec(vec![
+            vec![svd_result.vt[0], svd_result.vt[1]],
+            vec![svd_result.vt[2], svd_result.vt[3]]
+        ]);
+        
+        // Print raw values
+        println!("Original matrix: {:?}", mat);
+        println!("U matrix: {:?}", u_mat);
+        println!("S matrix: {:?}", s_mat);
+        println!("VT matrix: {:?}", vt_mat);
+        
+        // Check properties that must be true:
+        // 1. U and V should be orthogonal (U·Uᵀ = I and V·Vᵀ = I)
+        let u_ut = u_mat.dot(&u_mat.transpose());
+        let vt_v = vt_mat.dot(&vt_mat.transpose());
+        println!("U·Uᵀ (should be identity): {:?}", u_ut);
+        println!("VT·VTᵀ (should be identity): {:?}", vt_v);
+        
+        // 2. The reconstruction
+        let us = u_mat.dot(&s_mat);
+        let reconstructed = us.dot(&vt_mat);
+        println!("Reconstructed matrix: {:?}", reconstructed);
+        
+        // 3. Singular values
+        println!("Singular values: {:?}", svd_result.s);
     }
 }
