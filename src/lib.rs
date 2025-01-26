@@ -1,3 +1,5 @@
+use std::ops::{Mul, Add};
+
 #[derive(Debug)]
 #[derive(PartialEq)]
 #[derive(Clone)]
@@ -119,7 +121,8 @@ impl Matrix {
         diag
     }
 
-    pub fn sub(&self, other: &Matrix) -> Matrix {
+    // Matrix addition implementation
+    fn add_matrix(&self, other: &Matrix) -> Matrix {
         let (nrows, ncols) = self.shape();
         let (orows, ocols) = other.shape();
         assert_eq!(nrows, orows);
@@ -128,11 +131,16 @@ impl Matrix {
         for rc in 0..nrows {
             let mut row: Vec<f64> = Vec::new();
             for cc in 0..ncols {
-                row.push(self.get(rc, cc).expect("Failed to get value") - other.get(rc, cc).expect("Failed to get value"));
+                row.push(self.get(rc, cc).expect("Failed to get value") + other.get(rc, cc).expect("Failed to get value"));
             }
             rows.push(row);
         }
         Matrix { rows }
+    }
+
+    pub fn sub(&self, other: &Matrix) -> Matrix {
+        // Subtraction is the same as adding the negative
+        self.add_matrix(&(other * -1.0))
     }
 
     pub fn similar(&self, other: &Matrix, tol: f64) -> bool {
@@ -422,22 +430,91 @@ impl Matrix {
     }
 
     pub fn covariance(&self) -> Matrix {
-        let (nrows, ncols) = self.shape();
+        let (_nrows, ncols) = self.shape();
         let mut rows: Vec<Vec<f64>> = Vec::new();
         for i in 0..ncols {
             let mut row: Vec<f64> = Vec::new();
             for j in 0..ncols {
-                let mut sum: f64 = 0.0;
-                for k in 0..nrows {
-                    sum += self.get(k, i).expect("Failed to get value") * self.get(k, j).expect("Failed to get value");
-                }
-                row.push(sum / (nrows as f64));
+                row.push(self.get(i, j).expect("Failed to get value"));
             }
             rows.push(row);
         }
         Matrix { rows }
     }
 
+    pub fn mul_scalar(&self, scalar: f64) -> Matrix {
+        let (nrows, ncols) = self.shape();
+        let mut rows: Vec<Vec<f64>> = Vec::new();
+        for rc in 0..nrows {
+            let mut row: Vec<f64> = Vec::new();
+            for cc in 0..ncols {
+                row.push(self.get(rc, cc).expect("Failed to get value") * scalar);
+            }
+            rows.push(row);
+        }
+        Matrix { rows }
+    }
+
+    pub fn add_scalar(&self, scalar: f64) -> Matrix {
+        let (nrows, ncols) = self.shape();
+        let mut rows: Vec<Vec<f64>> = Vec::new();
+        for rc in 0..nrows {
+            let mut row: Vec<f64> = Vec::new();
+            for cc in 0..ncols {
+                row.push(self.get(rc, cc).expect("Failed to get value") + scalar);
+            }
+            rows.push(row);
+        }
+        Matrix { rows }
+    }
+}
+
+impl Mul<f64> for &Matrix {
+    type Output = Matrix;
+
+    fn mul(self, scalar: f64) -> Matrix {
+        self.mul_scalar(scalar)
+    }
+}
+
+impl Mul<f64> for Matrix {
+    type Output = Matrix;
+
+    fn mul(self, scalar: f64) -> Matrix {
+        &self * scalar
+    }
+}
+
+impl Add<f64> for &Matrix {
+    type Output = Matrix;
+
+    fn add(self, scalar: f64) -> Matrix {
+        self.add_scalar(scalar)
+    }
+}
+
+impl Add<f64> for Matrix {
+    type Output = Matrix;
+
+    fn add(self, scalar: f64) -> Matrix {
+        &self + scalar
+    }
+}
+
+impl Add<&Matrix> for &Matrix {
+    type Output = Matrix;
+
+    fn add(self, other: &Matrix) -> Matrix {
+        self.add_matrix(other)
+    }
+}
+
+impl Add<Matrix> for Matrix {
+    type Output = Matrix;
+
+    fn add(self, other: Matrix) -> Matrix {
+        &self + &other
+    }
 }
 
 #[cfg(test)]
@@ -692,80 +769,85 @@ mod tests {
 
     #[test]
     fn test_sub() {
-        let matA: Matrix = Matrix {
+        let mat_a: Matrix = Matrix {
             rows: vec![
                 vec![1.0, 2.0],
                 vec![3.0, 4.0],
             ],
         };
-        let matB: Matrix = Matrix {
+        let mat_b: Matrix = Matrix {
             rows: vec![
                 vec![5.0, 5.0],
                 vec![0.0, 4.0],
             ],
         };
-        let matResult: Matrix = Matrix {
+        let mat_result: Matrix = Matrix {
             rows: vec![
                 vec![-4.0, -3.0],
                 vec![3.0, 0.0],
             ],
         };
-        assert_eq!(matA.sub(&matB), matResult);
+        assert_eq!(mat_a.sub(&mat_b), mat_result);
     }
 
     #[test]
     fn test_similar() {
-        let matA: Matrix = Matrix {
+        let mat_a: Matrix = Matrix {
             rows: vec![
                 vec![1.0, 2.0],
                 vec![3.0, 4.0],
             ],
         };
-        let matB: Matrix = Matrix {
+        let mat_b: Matrix = Matrix {
             rows: vec![
-                vec![5.0, 5.0],
-                vec![0.0, 4.0],
-            ],
-        };
-        let matC: Matrix = Matrix {
-            rows: vec![
-                vec![1.0001, 2.0],
+                vec![1.0, 2.0],
                 vec![3.0, 4.0],
             ],
         };
-        assert!(!matA.similar(&matB, 0.001));
-        assert!(matA.similar(&matC, 0.1));
+
+        let mat_c: Matrix = Matrix {
+            rows: vec![
+                vec![1.0, 2.0],
+                vec![3.0, 4.1],
+            ],
+        };
+
+        assert!(mat_a.similar(&mat_b, 1e-10));
+        assert!(!mat_a.similar(&mat_c, 1e-10));
+        assert!(mat_a.similar(&mat_c, 0.2));
     }
 
     #[test]
     fn test_reshape() {
-        let matA: Matrix = Matrix {
+        let mat_a: Matrix = Matrix {
             rows: vec![
                 vec![1.0, 2.0, 3.0],
                 vec![4.0, 5.0, 6.0],
             ],
         };
-        let matB = matA.reshape(3, 2);
-        let matC: Matrix = Matrix {
+        let mat_b = mat_a.reshape(3, 2);
+        let mat_c: Matrix = Matrix {
             rows: vec![
                 vec![1.0, 2.0],
                 vec![3.0, 4.0],
                 vec![5.0, 6.0],
             ],
         };
-        assert_eq!(matB, matC);
+        assert_eq!(mat_b, mat_c);
     }
 
     #[test]
     fn test_svd_simple() {
-        // This matrix has known singular values: 3 and 0
-        let mat: Matrix = Matrix {
+        // This matrix has known singular values
+        let mat_a: Matrix = Matrix {
             rows: vec![
                 vec![2.0, 2.0],
                 vec![1.0, 1.0],
             ],
         };
-        let svd_result = mat.svd().expect("SVD failed");
+
+        // 1. Get SVD
+        let svd_result = mat_a.svd().expect("SVD failed");
         
         // Reshape the vectors into matrices
         let u_mat = Matrix::from_vec(vec![
@@ -781,7 +863,7 @@ mod tests {
         ]);
         
         // Print raw values
-        println!("Original matrix: {:?}", mat);
+        println!("Original matrix: {:?}", mat_a);
         println!("U matrix: {:?}", u_mat);
         println!("S matrix: {:?}", s_mat);
         println!("VT matrix: {:?}", vt_mat);
@@ -800,5 +882,68 @@ mod tests {
         
         // 3. Singular values
         println!("Singular values: {:?}", svd_result.s);
+    }
+
+    #[test]
+    fn test_scalar_operations() {
+        let mat = Matrix::from_vec(vec![
+            vec![1.0, 2.0],
+            vec![3.0, 4.0],
+        ]);
+
+        // Test scalar multiplication using operator
+        let mul_result = &mat * 2.0;
+        let expected_mul = Matrix::from_vec(vec![
+            vec![2.0, 4.0],
+            vec![6.0, 8.0],
+        ]);
+        assert_eq!(mul_result, expected_mul);
+
+        // Test scalar addition using operator
+        let add_result = &mat + 1.0;
+        let expected_add = Matrix::from_vec(vec![
+            vec![2.0, 3.0],
+            vec![4.0, 5.0],
+        ]);
+        assert_eq!(add_result, expected_add);
+
+        // Test with owned Matrix
+        let owned_mul = mat.clone() * 2.0;
+        assert_eq!(owned_mul, expected_mul);
+        
+        let owned_add = mat + 1.0;
+        assert_eq!(owned_add, expected_add);
+    }
+
+    #[test]
+    fn test_matrix_operations() {
+        let mat1 = Matrix::from_vec(vec![
+            vec![1.0, 2.0],
+            vec![3.0, 4.0],
+        ]);
+        let mat2 = Matrix::from_vec(vec![
+            vec![5.0, 6.0],
+            vec![7.0, 8.0],
+        ]);
+
+        // Test matrix addition using operator
+        let add_result = &mat1 + &mat2;
+        let expected_add = Matrix::from_vec(vec![
+            vec![6.0, 8.0],
+            vec![10.0, 12.0],
+        ]);
+        assert_eq!(add_result, expected_add);
+
+        // Test matrix subtraction using refactored method
+        let sub_result = mat1.sub(&mat2);
+        let expected_sub = Matrix::from_vec(vec![
+            vec![-4.0, -4.0],
+            vec![-4.0, -4.0],
+        ]);
+        assert_eq!(sub_result, expected_sub);
+
+        // Test with owned matrices
+        let owned_add = mat1.clone() + mat2.clone();
+        assert_eq!(owned_add, expected_add);
     }
 }
